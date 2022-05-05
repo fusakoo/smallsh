@@ -97,8 +97,9 @@ int main(){
         for (int i = 0; i < inputsize; i++) {
           /* ToDo
            * Modularize the clean up 
+           * Handle "   " (space) inputs
            */
-          printf("i = %d, inputsize = %d\n", i, inputsize);
+
           /* Clean this code later */
           if (i == inputsize - 1) {
             char temp[strlen(inputs[i])];
@@ -146,15 +147,51 @@ int main(){
         }
         /* Debugging */
         printf("Command: %s\n", currInput->command);
+        fflush(stdout);
         printf("Output: %s\n", currInput->output);
+        fflush(stdout);
         printf("Input: %s\n", currInput->input);
+        fflush(stdout);
         printf("Background process? %d\n", background);
+        fflush(stdout);
         int i = 0;
         while (currInput->args[i] != NULL) {
           printf("Arguments: %s\n", currInput->args[i]); 
+          fflush(stdout);
           i++;
+        }
+        /*
+         * 4. Built-in Commands
+         */
 
-        
+        /* exit */
+        if (strcmp(currInput->command,"exit") == 0) {
+          printf("Run exit command\n");
+          fflush(stdout);
+        }
+        /* cd */
+        else if (strcmp(currInput->command, "cd") == 0) {
+          printf("Run cd command\n");
+          if (currInput->args[0] == NULL) {
+            chdir(getenv("HOME"));
+            char cwd[100];
+            printf("Currently in: %s\n", getcwd(cwd,sizeof(cwd)));
+            fflush(stdout);
+          } else {
+            chdir(currInput->args[0]);
+            char cwd[100];
+            printf("Currently in: %s\n", getcwd(cwd,sizeof(cwd)));
+            fflush(stdout);
+          }
+        }
+        /* status */
+        else if (strcmp(currInput->command, "status") == 0) {
+          printf("Run status command\n");        
+        }
+        /*
+         * 5. Execute Other Commands
+         */
+        else {
         }
       }
     }
