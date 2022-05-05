@@ -16,6 +16,28 @@ struct input{
   char* output;
 };
 
+int *var_expansion(char *input) {
+  pid_t pid = getpid();
+  char* pidstr;
+  /* Reference: Ed Discussion post #355 */
+  {
+    int n = snprintf(NULL, 0, "%jd", pid);
+    pidstr = malloc((n + 1) * sizeof *pidstr);
+    sprintf(pidstr, "%jd", pid);
+  }
+  int pidlen = strlen(pidstr);
+  while(1){
+    char *p = strstr(input, "$$");
+    if (p != NULL) {
+      memmove(p + pidlen, p + 2, strlen(p+2) + 2);
+      memcpy(p, pidstr, pidlen);
+    } else {
+      break;
+    } 
+  }
+  return 0; 
+}
+
 int main(){
   printf("Starting smallsh!\n");
   printf("Current parent process's pid = %d\n", getpid());
@@ -26,22 +48,36 @@ int main(){
   char buffer[BUFFSIZE];
 
   while(1){
+    /*
+     * 1. Command Prompt
+     */
     fprintf(stdout, ": ");
     fflush(stdout);
     /* Loop if input is empty */
     if (fgets(buffer, sizeof(buffer), stdin) != NULL) {
+      /*
+       * 3. Expansion of Variable $$
+       */
+      if (strstr(buffer,"$$")) {
+        var_expansion(buffer);
+      }
+
+      /* 
+       * 2. Comment & Blank Lines
+       */
       char* inputs[ARGSIZE];
       int inputsize= 0;
       const char delim[2] = " ";
       char *token;
       token = strtok(buffer, delim);
 
+      /* Handle arguments (and blank inputs) */
       while ( token != NULL ){ 
         inputs[inputsize] = token;
         token = strtok(NULL, delim);
         inputsize++;
       }
-      /* Check the arguments */
+
       /* Check if the input is a comment (#) */ 
       if(strcmp(inputs[0],"#") == 0) {
         fprintf(stdout, ": ");
@@ -53,47 +89,57 @@ int main(){
         }
         fflush(stdout);
       } else {
+        /* Struct based on input to process command line */
         bool background = false;
-
-        /* Otherwise, check the arguments */
+        
         int inputarg = 0;
         struct input* currInput = malloc(sizeof(struct input));
         for (int i = 0; i < inputsize; i++) {
+          /* ToDo
+           * Modularize the clean up 
+           */
+          printf("i = %d, inputsize = %d\n", i, inputsize);
+          /* Clean this code later */
+          if (i == inputsize - 1) {
+            char temp[strlen(inputs[i])];
+            sscanf(inputs[i], "%s", temp);
+            strcpy(inputs[i],temp);
+          }
           /* Command */
           if (i == 0) {
             currInput->command = calloc(strlen(inputs[i]) + 1, sizeof(char));
-            //char* command;
-            //sscanf(inputs[i], "%s", command);
-            //strcpy(currInput->command, command);
             strcpy(currInput->command, inputs[i]);
           }
           /* Input file */
           else if (strcmp(inputs[i], "<") == 0) {
             i++;
+            /* Clean this code later */
+            if (i == inputsize - 1) {
+              char temp[strlen(inputs[i])];
+              sscanf(inputs[i], "%s", temp);
+              strcpy(inputs[i],temp);
+            }
             currInput->input = calloc(strlen(inputs[i]) + 1, sizeof(char));
-            //char* infile; 
-            //sscanf(inputs[i],"%s",infile);
-            //strcpy(currInput->input, infile);
             strcpy(currInput->input, inputs[i]);
           }
           /* Output file */
           else if (strcmp(inputs[i], ">") == 0) {
             i++;
+            /* Clean this code later */
+            if (i == inputsize - 1) {
+              char temp[strlen(inputs[i])];
+              sscanf(inputs[i], "%s", temp);
+              strcpy(inputs[i],temp);
+            }
             currInput->output = calloc(strlen(inputs[i]) + 1, sizeof(char));
-            //char* outfile;
-            //sscanf(inputs[i],"%s",outfile);
-            //strcpy(currInput->output, outfile);
             strcpy(currInput->output, inputs[i]);
           }
           /* Background or foreground process */
-          else if (strcmp(inputs[i], "&\n") == 0) {
+          else if (strcmp(inputs[i], "&") == 0) {
             background = true;
           }
           /* Arguments */
           else {
-            //char* arg;
-            //sscanf(inputs[i], "%s", arg);
-            //currInput->args[inputarg] = arg;
             currInput->args[inputarg] = inputs[i];
             inputarg++;
           }
