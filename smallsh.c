@@ -21,9 +21,9 @@ int *var_expansion(char *input) {
   char* pidstr;
   /* Reference: Ed Discussion post #355 */
   {
-    int n = snprintf(NULL, 0, "%jd", pid);
+    int n = snprintf(NULL, 0, "%d", pid);
     pidstr = malloc((n + 1) * sizeof *pidstr);
-    sprintf(pidstr, "%jd", pid);
+    sprintf(pidstr, "%d", pid);
   }
   int pidlen = strlen(pidstr);
   while(1){
@@ -40,46 +40,49 @@ int *var_expansion(char *input) {
 
 int main(){
   printf("Starting smallsh!\n");
-  printf("Current parent process's pid = %d\n", getpid());
 
-  //int   childStatus;
-  //pid_t childPid = fork();
+  int status;
+  pid_t parentPid = getpid();
+  printf("Current parent process's pid = %d\n", parentPid);
 
   char buffer[BUFFSIZE];
 
   while(1){
     /*
-     * 1. Command Prompt
-     */
+    * 1. Command Prompt
+    */
     fprintf(stdout, ": ");
     fflush(stdout);
     /* Loop if input is empty */
     if (fgets(buffer, sizeof(buffer), stdin) != NULL) {
       /*
-       * 3. Expansion of Variable $$
-       */
+      * 3. Expansion of Variable $$
+      */
+      printf("Old Buffer: %s", buffer);
       if (strstr(buffer,"$$")) {
         var_expansion(buffer);
       }
+      printf("New Buffer: %s", buffer);
 
       /* 
-       * 2. Comment & Blank Lines
-       */
+      * 2. Comment & Blank Lines
+      */
       char* inputs[ARGSIZE];
       int inputsize= 0;
+      int inputarg = 0;
       const char delim[2] = " ";
       char *token;
       token = strtok(buffer, delim);
 
       /* Handle arguments (and blank inputs) */
-      while ( token != NULL ){ 
+      while ( token != NULL ) { 
         inputs[inputsize] = token;
         token = strtok(NULL, delim);
         inputsize++;
       }
 
       /* Check if the input is a comment (#) */ 
-      if(strcmp(inputs[0],"#") == 0) {
+      if (strcmp(inputs[0],"#") == 0) {
         fprintf(stdout, ": ");
         for (int i = 0; i < inputsize; i++) {
           if (i != 0) {
@@ -88,17 +91,17 @@ int main(){
           fprintf(stdout, "%s", inputs[i]);
         }
         fflush(stdout);
-      } else {
+      }
+      else {
         /* Struct based on input to process command line */
         bool background = false;
         
-        int inputarg = 0;
         struct input* currInput = malloc(sizeof(struct input));
         for (int i = 0; i < inputsize; i++) {
           /* ToDo
-           * Modularize the clean up 
-           * Handle "   " (space) inputs
-           */
+          * Modularize the clean up 
+          * Handle "   " (space) inputs
+          */
 
           /* Clean this code later */
           if (i == inputsize - 1) {
@@ -161,13 +164,15 @@ int main(){
           i++;
         }
         /*
-         * 4. Built-in Commands
-         */
+        * 4. Built-in Commands
+        */
 
         /* exit */
         if (strcmp(currInput->command,"exit") == 0) {
           printf("Run exit command\n");
           fflush(stdout);
+          exit(0);
+          return(0);
         }
         /* cd */
         else if (strcmp(currInput->command, "cd") == 0) {
@@ -185,13 +190,51 @@ int main(){
           }
         }
         /* status */
+        /* Reference: Exploration: Process API - Monitoring Child Processes */
         else if (strcmp(currInput->command, "status") == 0) {
-          printf("Run status command\n");        
+          printf("Run status command\n");   
+          fflush(stdout);
+          waitpid(parentPid, &status,WNOHANG);
+          //printf("waitpid returned: %d\n", parentPid);
+          fflush(stdout);
+          if (WIFEXITED(status)) {
+            printf("Last foreground process exited normally with status %d\n", WEXITSTATUS(status));
+          } else {
+            printf("Last foreground process %d exited abnormally due to signal %d\n", WTERMSIG(status));
+          }
         }
         /*
-         * 5. Execute Other Commands
-         */
+        * 5. Execute Other Commands
+        */
         else {
+          /* Command + arguments + NULL */
+          int argcount = 1 + inputarg + 1;
+          char *newargv[argcount];
+          newargv[0] = currInput->command;
+          for (int i = 0; i < inputarg; i++) {
+            newargv[i] = currInput->args[inputarg];
+          }
+          newargv[argcount - 1] = NULL;
+          
+          //int childStatus;
+          pid_t spawnPid = fork();
+
+          switch(spawnPid) {
+          case -1:
+            perror("Fork() failed");
+            exit(1);
+            break;
+          case 0: 
+            /* Child process */
+            printf("Child (%d) is running the command\n", getpid());
+            int outcome = execvp(newargv[0], newargv);
+            perror("execvp");
+            exit(2);
+            break;
+          default:
+            /* Parent process */
+            spawnPid = waitpid(spawnPid, &status, 0);
+          }
         }
       }
     }
