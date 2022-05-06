@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <fcntl.h>
 #include <string.h>
 #include <stdbool.h>
 
@@ -58,11 +59,6 @@ int main(){
       /*
       * 3. Expansion of Variable $$
       */
-      printf("Old Buffer: %s", buffer);
-      if (strstr(buffer,"$$")) {
-        var_expansion(buffer);
-      }
-      printf("New Buffer: %s", buffer);
 
       /* 
       * 2. Comment & Blank Lines
@@ -199,8 +195,10 @@ int main(){
           fflush(stdout);
           if (WIFEXITED(status)) {
             printf("Last foreground process exited normally with status %d\n", WEXITSTATUS(status));
+            fflush(stdout);
           } else {
             printf("Last foreground process %d exited abnormally due to signal %d\n", WTERMSIG(status));
+            fflush(stdout);
           }
         }
         /*
@@ -214,17 +212,16 @@ int main(){
           if (inputarg > 0) {
             int argcount = 0;
             for (int i = 1; i <= inputarg; i++) {
-              //printf("Argument %d: %s\n", i, currInput->args[argcount]);
               newargv[i] = currInput->args[argcount];
               argcount++;
             }
           }
           newargv[component - 1] = NULL;
-          for (int i = 0; i < component; i++){
-            printf("Argument %d: %s\n", i, newargv[i]); 
-          }
+          // DEBUGGING!
+          //for (int i = 0; i < component; i++) {
+          //  printf("Argument %d: %s\n",i, newargv[i]);
+          //}
 
-          //int childStatus;
           pid_t spawnPid = fork();
 
           switch(spawnPid) {
@@ -234,34 +231,100 @@ int main(){
             break;
           case 0: 
             /* Child process */
-            printf("Child (%d) is running the command\n", getpid());
+            
+            /*
+             * 6. Input and output redirection
+             */
+            /* Input */
+            if (currInput->input != NULL ) {
+              int sourceFD = open(currInput->input, O_RDONLY);
+              fcntl(sourceFD, F_SETFD, FD_CLOEXEC);
+              if (sourceFD == -1){
+                perror("open()");
+                exit(1);
+              }
+              int result = dup2(sourceFD, 0);
+              if (result == -1){
+                perror("source dup2()");
+                exit(2);
+              }
+            }
+            else {
+              /* No input dest specified */
+              /* If background process -> direct to /dev/nul */
+              if (background == true) {
+                int sourceFD = open("/dev/null", O_RDONLY);
+                fcntl(sourceFD, F_SETFD, FD_CLOEXEC);
+                if (sourceFD == -1){
+                  perror("open()");
+                  exit(1);
+                }
+                int result = dup2(sourceFD, 0);
+                if (result == -1){
+                  perror("source dup2()");
+                  exit(2);
+                }
+              }
+            }
+            /* Output */
+            if (currInput->output != NULL) {
+              int targetFD = open(currInput->output, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+              fcntl(targetFD, F_SETFD, FD_CLOEXEC);
+              if (targetFD == -1){
+                perror("open()");
+                exit(1);
+              }
+              int result = dup2(targetFD, 1);
+              if (result == -1){
+                perror("target dup2()");
+                exit(2);
+              }
+            }
+            else {
+              /* No output dest specified */
+              /* If background process -> direct to /dev/nul */
+              if (background == true) {
+                int targetFD = open("/dev/null", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                fcntl(targetFD, F_SETFD, FD_CLOEXEC);
+                if (targetFD == -1){
+                  perror("open()");
+                  exit(1);
+                }
+                int result = dup2(targetFD, 1);
+                if (result == -1){
+                  perror("target dup2()");
+                  exit(2);
+                }
+              }
+            }
+            printf("Child (%d) is running the command in the background\n", getpid());
+            fflush(stdout);
             int outcome = execvp(newargv[0], newargv);
             perror("execvp");
             exit(2);
             break;
           default:
             /* Parent process */
-            spawnPid = waitpid(spawnPid, &status, 0);
+            if (background == true) {
+              printf("Running the command in the background.\n");
+              fflush(stdout);
+              spawnPid = waitpid(spawnPid, &status, WNOHANG);
+              printf("Processsign the child process. Waitpid returned value %d\n", spawnPid);
+              fflush(stdout);
+            }
+            else {
+              printf("Running the command in the foreground.\n");
+              fflush(stdout);
+              spawnPid = waitpid(spawnPid, &status, 0);
+            }
           }
+          printf("The process with pid %d is returning from background process\n", getpid());
+          fflush(stdout);
         }
       }
     }
     /* If there's no input, loop again */
   }
 
-  //if(childPid == -1){
-  //  perror("fork() failed!");
-  //  exit(1);
-  //} else if(childPid == 0){
-  //  // Child process executes this branch
-  //  sleep(10);
-  //} else{
-  //  // The parent process executes this branch
-  //  printf("Child's pid = %d\n", childPid);
-  //  // WNOHANG specified. If the child hasn't terminated, waitpid will immediately return with value 0
-  //  childPid = waitpid(childPid, &childStatus, WNOHANG);
-  //  printf("In the parent process waitpid returned value %d\n", childPid);
-  //}
-  //printf("The process with pid %d is returning from main\n", getpid());
   return 0;
 }
