@@ -208,14 +208,22 @@ int main(){
         */
         else {
           /* Command + arguments + NULL */
-          int argcount = 1 + inputarg + 1;
-          char *newargv[argcount];
+          int component = 1 + inputarg + 1;
+          char *newargv[component];
           newargv[0] = currInput->command;
-          for (int i = 0; i < inputarg; i++) {
-            newargv[i] = currInput->args[inputarg];
+          if (inputarg > 0) {
+            int argcount = 0;
+            for (int i = 1; i <= inputarg; i++) {
+              //printf("Argument %d: %s\n", i, currInput->args[argcount]);
+              newargv[i] = currInput->args[argcount];
+              argcount++;
+            }
           }
-          newargv[argcount - 1] = NULL;
-          
+          newargv[component - 1] = NULL;
+          for (int i = 0; i < component; i++){
+            printf("Argument %d: %s\n", i, newargv[i]); 
+          }
+
           //int childStatus;
           pid_t spawnPid = fork();
 
