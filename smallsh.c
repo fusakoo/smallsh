@@ -6,9 +6,13 @@
 #include <fcntl.h>
 #include <string.h>
 #include <stdbool.h>
+#include <err.h>
+#include <errno.h>
+#include <signal.h>
 
 #define BUFFSIZE 2048
 #define ARGSIZE 512
+#define MAXCHILDREN 10
 
 struct input{
   char* command;
@@ -39,16 +43,52 @@ int *var_expansion(char *input) {
   return 0; 
 }
 
+//void store_pid(pid_t pids, pid_t childpid, int childcount){
+//  for (int i = 0; i < MAXCHILDREN; i++) {
+//    if (pids[i] == 0) {
+//      pids[i] = newPid;
+//      childcount++;
+//      exit(1);
+//      break;
+//    }
+//    /* If there is too many children */
+//    else if ((i == (MAXCHILDREN - 1)) && (pids[i] != 0) ){
+//      err(errno=EAGAIN, "Max child process count reached");
+//    }
+//  }
+//}
+
 int main(){
   printf("Starting smallsh!\n");
 
   int status;
+  pid_t pids[MAXCHILDREN] = {0};
+  int childcount = 0;
+
   pid_t parentPid = getpid();
   printf("Current parent process's pid = %d\n", parentPid);
 
   char buffer[BUFFSIZE];
 
   while(1){
+    /* Check status of the background process */
+    for (int i = 0; i < MAXCHILDREN; i++) {
+      if (pids[i] != 0){
+        if (waitpid(pids[i], &status, WNOHANG) != 0) {
+          printf("Background pid %d complete: ", pids[i]);
+          fflush(stdout);
+          if (WIFEXITED(status)) {
+            printf("Exited with status %d\n", WEXITSTATUS(status));
+            fflush(stdout);
+          } else {
+            printf("Terminated with status %d\n", WTERMSIG(status));
+            fflush(stdout);
+          }
+          pids[i] = 0;
+          childcount--;
+        }
+      }
+    }
     /*
     * 1. Command Prompt
     */
@@ -59,6 +99,9 @@ int main(){
       /*
       * 3. Expansion of Variable $$
       */
+      if (strstr(buffer,"$$")) {
+        var_expansion(buffer);
+      }
 
       /* 
       * 2. Comment & Blank Lines
@@ -67,7 +110,7 @@ int main(){
       int inputsize= 0;
       int inputarg = 0;
       const char delim[2] = " ";
-      char *token;
+      char* token;
       token = strtok(buffer, delim);
 
       /* Handle arguments (and blank inputs) */
@@ -144,21 +187,6 @@ int main(){
             inputarg++;
           }
         }
-        /* Debugging */
-        printf("Command: %s\n", currInput->command);
-        fflush(stdout);
-        printf("Output: %s\n", currInput->output);
-        fflush(stdout);
-        printf("Input: %s\n", currInput->input);
-        fflush(stdout);
-        printf("Background process? %d\n", background);
-        fflush(stdout);
-        int i = 0;
-        while (currInput->args[i] != NULL) {
-          printf("Arguments: %s\n", currInput->args[i]); 
-          fflush(stdout);
-          i++;
-        }
         /*
         * 4. Built-in Commands
         */
@@ -167,6 +195,12 @@ int main(){
         if (strcmp(currInput->command,"exit") == 0) {
           printf("Run exit command\n");
           fflush(stdout);
+          /* TODO: Kill processes! */
+          //for (int i = 0; i < MAXCHILDREN; i++) {
+          //  if (pids[i] != 0) {
+          //    kill(pids[i], 0);
+          //  }
+          //}
           exit(0);
           return(0);
         }
@@ -190,14 +224,14 @@ int main(){
         else if (strcmp(currInput->command, "status") == 0) {
           printf("Run status command\n");   
           fflush(stdout);
-          waitpid(parentPid, &status,WNOHANG);
+          waitpid(parentPid, &status, WNOHANG);
           //printf("waitpid returned: %d\n", parentPid);
           fflush(stdout);
           if (WIFEXITED(status)) {
-            printf("Last foreground process exited normally with status %d\n", WEXITSTATUS(status));
+            printf("Exited with status %d\n", WEXITSTATUS(status));
             fflush(stdout);
           } else {
-            printf("Last foreground process %d exited abnormally due to signal %d\n", WTERMSIG(status));
+            printf("Terminated with status %d\n", WTERMSIG(status));
             fflush(stdout);
           }
         }
@@ -221,6 +255,13 @@ int main(){
           //for (int i = 0; i < component; i++) {
           //  printf("Argument %d: %s\n",i, newargv[i]);
           //}
+          
+          /* Prevent forking if max number of child processes has been reached */
+          if (childcount == 10) {
+            err(errno=EAGAIN, "Max number of child process reached");
+            exit(0);
+            break;
+          }
 
           pid_t spawnPid = fork();
 
@@ -240,12 +281,12 @@ int main(){
               int sourceFD = open(currInput->input, O_RDONLY);
               fcntl(sourceFD, F_SETFD, FD_CLOEXEC);
               if (sourceFD == -1){
-                perror("open()");
+                perror("Open()");
                 exit(1);
               }
               int result = dup2(sourceFD, 0);
               if (result == -1){
-                perror("source dup2()");
+                perror("Source dup2()");
                 exit(2);
               }
             }
@@ -256,12 +297,12 @@ int main(){
                 int sourceFD = open("/dev/null", O_RDONLY);
                 fcntl(sourceFD, F_SETFD, FD_CLOEXEC);
                 if (sourceFD == -1){
-                  perror("open()");
+                  perror("Open()");
                   exit(1);
                 }
                 int result = dup2(sourceFD, 0);
                 if (result == -1){
-                  perror("source dup2()");
+                  perror("Source dup2()");
                   exit(2);
                 }
               }
@@ -271,12 +312,12 @@ int main(){
               int targetFD = open(currInput->output, O_WRONLY | O_CREAT | O_TRUNC, 0644);
               fcntl(targetFD, F_SETFD, FD_CLOEXEC);
               if (targetFD == -1){
-                perror("open()");
+                perror("Open()");
                 exit(1);
               }
               int result = dup2(targetFD, 1);
               if (result == -1){
-                perror("target dup2()");
+                perror("Target dup2()");
                 exit(2);
               }
             }
@@ -287,12 +328,12 @@ int main(){
                 int targetFD = open("/dev/null", O_WRONLY | O_CREAT | O_TRUNC, 0644);
                 fcntl(targetFD, F_SETFD, FD_CLOEXEC);
                 if (targetFD == -1){
-                  perror("open()");
+                  perror("Open()");
                   exit(1);
                 }
                 int result = dup2(targetFD, 1);
                 if (result == -1){
-                  perror("target dup2()");
+                  perror("Target dup2()");
                   exit(2);
                 }
               }
@@ -306,10 +347,23 @@ int main(){
           default:
             /* Parent process */
             if (background == true) {
-              printf("Running the command in the background.\n");
+              printf("Running the command in the background (%d).\n", spawnPid);
               fflush(stdout);
+              //store_pid(pids, spawnPid, childcount);
+              for (int i = 0; i < MAXCHILDREN; i++) {
+                if (pids[i] == 0) {
+                  pids[i] = spawnPid;
+                  childcount++;
+                  break;
+                }
+                /* If there is too many children */
+                else if ((i == (MAXCHILDREN - 1)) && (pids[i] != 0) ){
+                  err(errno=EAGAIN, "Max child process count reached");
+                  exit(1);
+                }
+              }
               spawnPid = waitpid(spawnPid, &status, WNOHANG);
-              printf("Processsign the child process. Waitpid returned value %d\n", spawnPid);
+              printf("Processsing the child process. Waitpid returned value %d\n", spawnPid);
               fflush(stdout);
             }
             else {
@@ -318,8 +372,6 @@ int main(){
               spawnPid = waitpid(spawnPid, &status, 0);
             }
           }
-          printf("The process with pid %d is returning from background process\n", getpid());
-          fflush(stdout);
         }
       }
     }
