@@ -22,6 +22,7 @@
  * Figure out the empty input issue
  * Modularization
  * Signal output
+ * Kill defunct (zombie) process
  */
 
 volatile sig_atomic_t gRunForeground = 1;
@@ -230,6 +231,7 @@ int main(){
             inputarg++;
           }
         }
+        
         /*
         * 4. Built-in Commands
         */
@@ -256,15 +258,11 @@ int main(){
             char cwd[100];
             printf("Currently in: %s\n", getcwd(cwd,sizeof(cwd)));
             fflush(stdout);
-            free(currInput->command);
-            free(currInput);
           } else {
             chdir(currInput->args[0]);
             char cwd[100];
             printf("Currently in: %s\n", getcwd(cwd,sizeof(cwd)));
             fflush(stdout);
-            free(currInput->command);
-            free(currInput);
           }
         }
         /* status */
@@ -278,8 +276,6 @@ int main(){
             printf("Terminated by signal %d\n", WTERMSIG(status));
             fflush(stdout);
           }
-          free(currInput->command);
-          free(currInput);
         }
         /*
         * 5. Execute Other Commands
