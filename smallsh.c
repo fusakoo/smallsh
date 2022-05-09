@@ -119,17 +119,10 @@ int main(){
         token = strtok(NULL, delim);
         inputsize++;
       }
-
+      
       /* Check if the input is a comment (#) */ 
-      if (strcmp(inputs[0],"#") == 0) {
-        fprintf(stdout, ": ");
-        for (int i = 0; i < inputsize; i++) {
-          if (i != 0) {
-            fprintf(stdout, " ");
-          }
-          fprintf(stdout, "%s", inputs[i]);
-        }
-        fflush(stdout);
+      if (strpbrk(inputs[0],"#") != NULL) {
+        // See if we need to implement any feature
       }
       else {
         /* Struct based on input to process command line */
@@ -338,15 +331,13 @@ int main(){
                 }
               }
             }
-            printf("Child (%d) is running the command in the background\n", getpid());
-            fflush(stdout);
             int outcome = execvp(newargv[0], newargv);
             perror("execvp");
             exit(2);
             break;
           default:
             /* Parent process */
-            if (background == true) {
+            if (background == 1) {
               printf("Running the command in the background (%d).\n", spawnPid);
               fflush(stdout);
               //store_pid(pids, spawnPid, childcount);
