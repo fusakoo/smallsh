@@ -1,5 +1,7 @@
+#define _POSIX_SOURCE
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <signal.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,12 +16,26 @@
 #define ARGSIZE 512
 #define MAXCHILDREN 10
 
+volatile sig_atomic_t gRunForeground = 1;
+
 struct input{
   char* command;
   char* args[ARGSIZE];
   char* input;
   char* output;
 };
+
+// Handler for SIGINT
+void handle_SIGINT(int signo) {
+  gRunForeground = 0;
+  char* message = "Terminated by signal 2\n";
+  write(STDOUT_FILENO, message, 23);
+}
+
+// Handler for SIGTSTP
+void handle_SIGTSTP(int signo) {
+
+}
 
 int *var_expansion(char *input) {
   pid_t pid = getpid();
@@ -71,6 +87,25 @@ int main(){
   char buffer[BUFFSIZE];
 
   while(1){
+    /*
+     * 8. Signals SIGINT & SIGTSTP
+     * Reference: Exploration - Signal Handling API
+     * Reference: Ed Discussion post #442
+     */
+    struct sigaction SIGINT_action = {0}, ignore_action = {0};
+
+    // ignore_action struct as SIG_IGN as its signal handler
+    ignore_action.sa_handler = SIG_IGN;
+    // Register ignore_action as the handler for SIGTSTP
+    sigaction(SIGTSTP, &ignore_action, NULL);
+    
+    // Fill out the SIGINT_action struct
+    // Register handle_SIGINT as the signal handler
+    SIGINT_action.sa_handler = handle_SIGINT;
+    sigfillset(&SIGINT_action.sa_mask);
+    SIGINT_action.sa_flags = 0;
+    sigaction(SIGINT, &SIGINT_action, NULL);
+
     /* Check status of the background process */
     for (int i = 0; i < MAXCHILDREN; i++) {
       if (pids[i] != 0){
@@ -81,7 +116,7 @@ int main(){
             printf("Exited with status %d\n", WEXITSTATUS(status));
             fflush(stdout);
           } else {
-            printf("Terminated with status %d\n", WTERMSIG(status));
+            printf("Terminated by signal %d\n", WTERMSIG(status));
             fflush(stdout);
           }
           pids[i] = 0;
@@ -119,8 +154,12 @@ int main(){
         token = strtok(NULL, delim);
         inputsize++;
       }
+
+      /* Clear out the input buffer*/
+      //memset(buffer, 0, sizeof(buffer));
       
-      /* Check if the input is a comment (#) */ 
+      /* Check if the input is a comment (#) */
+      // TODO: Check if it's an empty string, e.g. " "
       if (strpbrk(inputs[0],"#") != NULL) {
         // See if we need to implement any feature
       }
@@ -224,7 +263,7 @@ int main(){
             printf("Exited with status %d\n", WEXITSTATUS(status));
             fflush(stdout);
           } else {
-            printf("Terminated with status %d\n", WTERMSIG(status));
+            printf("Terminated by signal %d\n", WTERMSIG(status));
             fflush(stdout);
           }
         }
@@ -244,10 +283,6 @@ int main(){
             }
           }
           newargv[component - 1] = NULL;
-          // DEBUGGING!
-          //for (int i = 0; i < component; i++) {
-          //  printf("Argument %d: %s\n",i, newargv[i]);
-          //}
           
           /* Prevent forking if max number of child processes has been reached */
           if (childcount == 10) {
@@ -332,11 +367,13 @@ int main(){
               }
             }
             int outcome = execvp(newargv[0], newargv);
-            perror("execvp");
+            perror(newargv[0]);
             exit(2);
             break;
           default:
-            /* Parent process */
+            /* Background process */
+            // If it's a background process specified with &
+            // TODO: OR, if gSignalStatus = 1 or something like that
             if (background == 1) {
               printf("Running the command in the background (%d).\n", spawnPid);
               fflush(stdout);
@@ -358,9 +395,15 @@ int main(){
               fflush(stdout);
             }
             else {
-              printf("Running the command in the foreground.\n");
-              fflush(stdout);
-              spawnPid = waitpid(spawnPid, &status, 0);
+              /* Foreground process */
+              // TODO: make sure to remove this
+              //printf("Running the command in the foreground.\n");
+              //fflush(stdout);
+              gRunForeground = 1;
+              while (gRunForeground) {
+                spawnPid = waitpid(spawnPid, &status, 0);
+                gRunForeground = 0;
+              }
             }
           }
         }
