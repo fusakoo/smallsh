@@ -16,7 +16,17 @@
 #define ARGSIZE 512
 #define MAXCHILDREN 10
 
+/*
+ * TODO
+ * Ctrl + C shouldn't print newline
+ * Figure out the empty input issue
+ * Modularization
+ * Signal output
+ */
+
 volatile sig_atomic_t gRunForeground = 1;
+volatile sig_atomic_t gForegroundActive = 0;
+volatile sig_atomic_t gForegroundMode = 0;
 
 struct input{
   char* command;
@@ -27,16 +37,29 @@ struct input{
 
 // Handler for SIGINT
 void handle_SIGINT(int signo) {
-  gRunForeground = 0;
-  char* message = "Terminated by signal 2\n";
-  write(STDOUT_FILENO, message, 23);
+  if (gForegroundActive == 1) {
+    gForegroundActive = 0;
+    gRunForeground = 0;
+    char* message = "\nTerminated by signal 2\n";
+    write(STDOUT_FILENO, message, 24);
+  }
 }
 
 // Handler for SIGTSTP
 void handle_SIGTSTP(int signo) {
-
+  if (gForegroundMode == 0) {
+    char* entryMessage = "\nEntering foreground-only mode (& is now ignored)\n";
+    write(STDOUT_FILENO, entryMessage, 50);
+    gForegroundMode = 1;
+  }
+  else {
+    char* exitMessage = "\nExiting foreground-only mode\n";
+    write(STDOUT_FILENO, exitMessage, 30);
+    gForegroundMode = 0;  
+  }
 }
 
+// Function to process $$ expansion to pid
 int *var_expansion(char *input) {
   pid_t pid = getpid();
   char* pidstr;
@@ -59,45 +82,34 @@ int *var_expansion(char *input) {
   return 0; 
 }
 
-//void store_pid(pid_t pids, pid_t childpid, int childcount){
-//  for (int i = 0; i < MAXCHILDREN; i++) {
-//    if (pids[i] == 0) {
-//      pids[i] = newPid;
-//      childcount++;
-//      exit(1);
-//      break;
-//    }
-//    /* If there is too many children */
-//    else if ((i == (MAXCHILDREN - 1)) && (pids[i] != 0) ){
-//      err(errno=EAGAIN, "Max child process count reached");
-//    }
-//  }
-//}
-
 int main(){
-  printf("Starting smallsh!\n");
+  printf("Welcome to smallsh!\n");
+  fflush(stdout);
 
   int status;
   pid_t pids[MAXCHILDREN] = {0};
   int childcount = 0;
 
   pid_t parentPid = getpid();
-  printf("Current parent process's pid = %d\n", parentPid);
-
   char buffer[BUFFSIZE];
 
   while(1){
+    /* Clear out the input buffer*/
+    memset(buffer, 0, sizeof(buffer));
+    
     /*
      * 8. Signals SIGINT & SIGTSTP
      * Reference: Exploration - Signal Handling API
      * Reference: Ed Discussion post #442
      */
-    struct sigaction SIGINT_action = {0}, ignore_action = {0};
+    struct sigaction SIGINT_action = {0}, SIGTSTP_action = {0};
 
-    // ignore_action struct as SIG_IGN as its signal handler
-    ignore_action.sa_handler = SIG_IGN;
-    // Register ignore_action as the handler for SIGTSTP
-    sigaction(SIGTSTP, &ignore_action, NULL);
+    // Fill out the SIGTSTP_action struct
+    // Register handle_SIGTSTP as the signal handler
+    SIGTSTP_action.sa_handler = handle_SIGTSTP;
+    sigfillset(&SIGTSTP_action.sa_mask);
+    SIGTSTP_action.sa_flags = 0;
+    sigaction(SIGTSTP, &SIGTSTP_action, NULL);
     
     // Fill out the SIGINT_action struct
     // Register handle_SIGINT as the signal handler
@@ -113,7 +125,7 @@ int main(){
           printf("Background pid %d complete: ", pids[i]);
           fflush(stdout);
           if (WIFEXITED(status)) {
-            printf("Exited with status %d\n", WEXITSTATUS(status));
+            printf("Exit status %d\n", WEXITSTATUS(status));
             fflush(stdout);
           } else {
             printf("Terminated by signal %d\n", WTERMSIG(status));
@@ -124,10 +136,11 @@ int main(){
         }
       }
     }
+    
     /*
     * 1. Command Prompt
     */
-    fprintf(stdout, ": ");
+    printf(": ");
     fflush(stdout);
     /* Loop if input is empty */
     if (fgets(buffer, sizeof(buffer), stdin) != NULL) {
@@ -142,28 +155,24 @@ int main(){
       * 2. Comment & Blank Lines
       */
       char* inputs[ARGSIZE];
-      int inputsize= 0;
+      int inputsize = 0;
       int inputarg = 0;
       const char delim[2] = " ";
       char* token;
       token = strtok(buffer, delim);
 
       /* Handle arguments (and blank inputs) */
-      while ( token != NULL ) { 
+      while ( token != NULL ) {
         inputs[inputsize] = token;
         token = strtok(NULL, delim);
         inputsize++;
       }
 
       /* Clear out the input buffer*/
-      //memset(buffer, 0, sizeof(buffer));
-      
+
       /* Check if the input is a comment (#) */
       // TODO: Check if it's an empty string, e.g. " "
-      if (strpbrk(inputs[0],"#") != NULL) {
-        // See if we need to implement any feature
-      }
-      else {
+      if ((strpbrk(inputs[0],"#") == NULL) || (strcmp(inputs[0], "\0") == 0)) {
         /* Struct based on input to process command line */
         bool background = false;
         
@@ -211,7 +220,9 @@ int main(){
           }
           /* Background or foreground process */
           else if (strcmp(inputs[i], "&") == 0) {
-            background = true;
+            if (gForegroundMode == 0) {
+              background = true;
+            }
           }
           /* Arguments */
           else {
@@ -225,47 +236,50 @@ int main(){
 
         /* exit */
         if (strcmp(currInput->command,"exit") == 0) {
-          printf("Run exit command\n");
+          printf("Exiting smallsh!\n");
           fflush(stdout);
-          /* TODO: Kill processes! */
-          //for (int i = 0; i < MAXCHILDREN; i++) {
-          //  if (pids[i] != 0) {
-          //    kill(pids[i], 0);
-          //  }
-          //}
+          // Kill any child process before exiting
+          for (int i = 0; i < MAXCHILDREN; i++) {
+            if (pids[i] != 0) {
+              kill(pids[i], SIGTERM);
+            }
+          }
+          free(currInput->command);
+          free(currInput);
           exit(0);
           return(0);
         }
         /* cd */
         else if (strcmp(currInput->command, "cd") == 0) {
-          printf("Run cd command\n");
           if (currInput->args[0] == NULL) {
             chdir(getenv("HOME"));
             char cwd[100];
             printf("Currently in: %s\n", getcwd(cwd,sizeof(cwd)));
             fflush(stdout);
+            free(currInput->command);
+            free(currInput);
           } else {
             chdir(currInput->args[0]);
             char cwd[100];
             printf("Currently in: %s\n", getcwd(cwd,sizeof(cwd)));
             fflush(stdout);
+            free(currInput->command);
+            free(currInput);
           }
         }
         /* status */
-        /* Reference: Exploration: Process API - Monitoring Child Processes */
+        // Reference: Exploration: Process API - Monitoring Child Processes
         else if (strcmp(currInput->command, "status") == 0) {
-          printf("Run status command\n");   
-          fflush(stdout);
           waitpid(parentPid, &status, WNOHANG);
-          //printf("waitpid returned: %d\n", parentPid);
-          fflush(stdout);
           if (WIFEXITED(status)) {
-            printf("Exited with status %d\n", WEXITSTATUS(status));
+            printf("Exit status %d\n", WEXITSTATUS(status));
             fflush(stdout);
           } else {
             printf("Terminated by signal %d\n", WTERMSIG(status));
             fflush(stdout);
           }
+          free(currInput->command);
+          free(currInput);
         }
         /*
         * 5. Execute Other Commands
@@ -284,9 +298,10 @@ int main(){
           }
           newargv[component - 1] = NULL;
           
-          /* Prevent forking if max number of child processes has been reached */
+          // Prevent forking if max number of child processes has been reached
           if (childcount == 10) {
             err(errno=EAGAIN, "Max number of child process reached");
+            fflush(stderr);
             exit(0);
             break;
           }
@@ -296,6 +311,7 @@ int main(){
           switch(spawnPid) {
           case -1:
             perror("Fork() failed");
+            fflush(stderr);
             exit(1);
             break;
           case 0: 
@@ -310,27 +326,31 @@ int main(){
               fcntl(sourceFD, F_SETFD, FD_CLOEXEC);
               if (sourceFD == -1){
                 perror("Open()");
+                fflush(stderr);
                 exit(1);
               }
               int result = dup2(sourceFD, 0);
               if (result == -1){
                 perror("Source dup2()");
+                fflush(stderr);
                 exit(2);
               }
             }
             else {
-              /* No input dest specified */
-              /* If background process -> direct to /dev/nul */
+              // No input dest specified
+              // If background process -> direct to /dev/nul
               if (background == true) {
                 int sourceFD = open("/dev/null", O_RDONLY);
                 fcntl(sourceFD, F_SETFD, FD_CLOEXEC);
                 if (sourceFD == -1){
                   perror("Open()");
+                  fflush(stderr);
                   exit(1);
                 }
                 int result = dup2(sourceFD, 0);
                 if (result == -1){
                   perror("Source dup2()");
+                  fflush(stderr);
                   exit(2);
                 }
               }
@@ -341,39 +361,43 @@ int main(){
               fcntl(targetFD, F_SETFD, FD_CLOEXEC);
               if (targetFD == -1){
                 perror("Open()");
+                fflush(stderr);
                 exit(1);
               }
               int result = dup2(targetFD, 1);
               if (result == -1){
                 perror("Target dup2()");
+                fflush(stderr);
                 exit(2);
               }
             }
             else {
-              /* No output dest specified */
-              /* If background process -> direct to /dev/nul */
+              // No output dest specified
+              // If background process -> direct to /dev/nul
               if (background == true) {
                 int targetFD = open("/dev/null", O_WRONLY | O_CREAT | O_TRUNC, 0644);
                 fcntl(targetFD, F_SETFD, FD_CLOEXEC);
                 if (targetFD == -1){
                   perror("Open()");
+                  fflush(stderr);
                   exit(1);
                 }
                 int result = dup2(targetFD, 1);
                 if (result == -1){
                   perror("Target dup2()");
+                  fflush(stderr);
                   exit(2);
                 }
               }
             }
-            int outcome = execvp(newargv[0], newargv);
+            execvp(newargv[0], newargv);
             perror(newargv[0]);
+            fflush(stderr);
             exit(2);
             break;
           default:
             /* Background process */
             // If it's a background process specified with &
-            // TODO: OR, if gSignalStatus = 1 or something like that
             if (background == 1) {
               printf("Running the command in the background (%d).\n", spawnPid);
               fflush(stdout);
@@ -384,22 +408,20 @@ int main(){
                   childcount++;
                   break;
                 }
-                /* If there is too many children */
+                // If there is too many children
                 else if ((i == (MAXCHILDREN - 1)) && (pids[i] != 0) ){
                   err(errno=EAGAIN, "Max child process count reached");
+                  fflush(stderr);
                   exit(1);
                 }
               }
               spawnPid = waitpid(spawnPid, &status, WNOHANG);
-              printf("Processsing the child process. Waitpid returned value %d\n", spawnPid);
-              fflush(stdout);
             }
             else {
               /* Foreground process */
               // TODO: make sure to remove this
-              //printf("Running the command in the foreground.\n");
-              //fflush(stdout);
               gRunForeground = 1;
+              gForegroundActive = 1;
               while (gRunForeground) {
                 spawnPid = waitpid(spawnPid, &status, 0);
                 gRunForeground = 0;
