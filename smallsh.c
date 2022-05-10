@@ -18,11 +18,9 @@
 
 /*
  * TODO
- * Ctrl + C shouldn't print newline
  * Figure out the empty input issue
  * Modularization
  * Signal output
- * Kill defunct (zombie) process
  */
 
 volatile sig_atomic_t gRunForeground = 1;
@@ -38,7 +36,7 @@ struct input{
 
 // Handler for SIGINT
 void handle_SIGINT(int signo) {
-  if (gForegroundActive == 1) {
+  if ((gForegroundActive == 1) && (gRunForeground == 1)) {
     gForegroundActive = 0;
     gRunForeground = 0;
     char* message = "\nTerminated by signal 2\n";
@@ -103,7 +101,7 @@ int main(){
      * Reference: Exploration - Signal Handling API
      * Reference: Ed Discussion post #442
      */
-    struct sigaction SIGINT_action = {0}, SIGTSTP_action = {0};
+    struct sigaction SIGINT_action = {0}, SIGTSTP_action = {0}, ignore_action = {0};
 
     // Fill out the SIGTSTP_action struct
     // Register handle_SIGTSTP as the signal handler
@@ -117,7 +115,10 @@ int main(){
     SIGINT_action.sa_handler = handle_SIGINT;
     sigfillset(&SIGINT_action.sa_mask);
     SIGINT_action.sa_flags = 0;
-    sigaction(SIGINT, &SIGINT_action, NULL);
+
+    // Initialize SIGINT with ignore_action handler to ignore SIGINT until process
+    ignore_action.sa_handler = SIG_IGN;
+    sigaction(SIGINT, &ignore_action, NULL);
 
     /* Check status of the background process */
     for (int i = 0; i < MAXCHILDREN; i++) {
@@ -143,6 +144,7 @@ int main(){
     */
     printf(": ");
     fflush(stdout);
+    sigaction(SIGINT, &ignore_action, NULL);
     /* Loop if input is empty */
     if (fgets(buffer, sizeof(buffer), stdin) != NULL) {
       /*
@@ -281,6 +283,8 @@ int main(){
         * 5. Execute Other Commands
         */
         else {
+          sigaction(SIGINT, &SIGINT_action, NULL);
+          
           /* Command + arguments + NULL */
           int component = 1 + inputarg + 1;
           char *newargv[component];
@@ -392,6 +396,8 @@ int main(){
             exit(2);
             break;
           default:
+            sigaction(SIGINT, &SIGINT_action, NULL);
+            
             /* Background process */
             // If it's a background process specified with &
             if (background == 1) {
@@ -415,13 +421,14 @@ int main(){
             }
             else {
               /* Foreground process */
-              // TODO: make sure to remove this
               gRunForeground = 1;
               gForegroundActive = 1;
               while (gRunForeground) {
                 spawnPid = waitpid(spawnPid, &status, 0);
                 gRunForeground = 0;
               }
+              // Zombie Killer (in case SIGINT kills above)
+              waitpid(spawnPid, &status, 0);
             }
           }
         }
