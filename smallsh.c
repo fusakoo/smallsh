@@ -14,13 +14,11 @@
 
 #define BUFFSIZE 2048
 #define ARGSIZE 512
-#define MAXCHILDREN 10
+#define MAXCHILDREN 30
 
 /*
  * TODO
- * Figure out the empty input issue
  * Modularization
- * Signal output
  */
 
 volatile sig_atomic_t gRunForeground = 1;
@@ -144,8 +142,7 @@ int main(){
     */
     printf(": ");
     fflush(stdout);
-    sigaction(SIGINT, &ignore_action, NULL);
-    /* Loop if input is empty */
+
     if (fgets(buffer, sizeof(buffer), stdin) != NULL) {
       /*
       * 3. Expansion of Variable $$
@@ -163,19 +160,25 @@ int main(){
       const char delim[2] = " ";
       char* token;
       token = strtok(buffer, delim);
+      bool ignoreCommand = false;
 
       /* Handle arguments (and blank inputs) */
       while ( token != NULL ) {
+        if (strncmp(token, "\n", 1) == 0) {
+          ignoreCommand = true;
+          break;
+        }
+        if (strncmp(token, "#", 1) == 0) {
+          ignoreCommand = true;
+          break;
+        }
         inputs[inputsize] = token;
         token = strtok(NULL, delim);
         inputsize++;
       }
 
-      /* Clear out the input buffer*/
-
       /* Check if the input is a comment (#) */
-      // TODO: Check if it's an empty string, e.g. " "
-      if ((strpbrk(inputs[0],"#") == NULL) || (strcmp(inputs[0], "\0") == 0)) {
+      if (ignoreCommand == false) {
         /* Struct based on input to process command line */
         bool background = false;
         
